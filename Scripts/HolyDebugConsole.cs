@@ -1256,7 +1256,7 @@ namespace Holylib.DebugConsole {
             
             foreach (var keybinding in _keybindings) {
                 if (_methodNameToCommandBlock.TryGetValue(keybinding.Key, out var block)) {
-                    block.RunCommand();
+                    
                 } else {
                     keybindsToRemove.Add(keybinding.Key);
                 }
