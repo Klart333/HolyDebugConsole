@@ -8,133 +8,180 @@ using UnityEngine.InputSystem;
 using UnityEngine.UIElements;
 using Debug = UnityEngine.Debug;
 
-namespace Holylib.DebugConsole {
+namespace Holylib.DebugConsole
+{
 
-    [RequireComponent(typeof(UIDocument))]
-    public class HolyDebugConsole : MonoBehaviour {
+    [RequireComponent(typeof(PanelRenderer))]
+    public partial class HolyDebugConsole : MonoBehaviour
+    {
 
         [Header("Settings")]
         [Tooltip("When calling a debug function using keybinds hold this button first")]
-        [SerializeField] private Key _debugCommandKey = Key.AltGr;
-        
+        [SerializeField]
+        private Key _debugCommandKey = Key.AltGr;
+
         [Tooltip("Example commands won't show up")]
-        [field:SerializeField] public bool ExcludeExampleCommands { get; private set; } = false;
-        
+        [field: SerializeField]
+        public bool ExcludeExampleCommands { get; private set; } = false;
+
         [field: SerializeField]
         public List<string> whitelistedAssemblies = new List<string>();
-        
+
         #region References
+
         [Header("References")]
-        [HideInInspector][SerializeField] private VisualTreeAsset _parameterCommandBlock;
-        [HideInInspector][SerializeField] private VisualTreeAsset _commandBlockParameter;
-        [HideInInspector][SerializeField] private VisualTreeAsset _commandBlockGroup;
-        [HideInInspector][SerializeField] private VisualTreeAsset _consoleLine;
-        [HideInInspector][SerializeField] private VisualTreeAsset _commandBlockBoolParameter;
-        [HideInInspector][SerializeField] private VisualTreeAsset _comboBoxPopUp;
-        
+        [SerializeField]
+        private VisualTreeAsset _parameterCommandBlock;
+
+        [SerializeField]
+        private VisualTreeAsset _commandBlockParameter;
+
+        [SerializeField]
+        private VisualTreeAsset _commandBlockGroup;
+
+        [SerializeField]
+        private VisualTreeAsset _consoleLine;
+
+        [SerializeField]
+        private VisualTreeAsset _commandBlockBoolParameter;
+
+        [SerializeField]
+        private VisualTreeAsset _comboBoxPopUp;
+
         private VisualElement _root;
         private ScrollView _blocksUI;
         private TextField _searchField;
         private Label _commandList;
         private ScrollView _consoleView;
-        
-        private UIDocument _uiDocument => GetComponent<UIDocument>();
-#endregion
+
+        private PanelRenderer _uiDocument => GetComponent<PanelRenderer>();
+
+        #endregion
+
+        private bool isInitiailized;
 
         public static bool IsConsoleOpen { get; private set; }
+
         public static HolyDebugConsole instance;
+
         public void ToggleConsole() => _toggleConsole();
         public Action<bool> OnConsoleToggled;
         public void ExecuteLastCommand() => _executeCommand(_searchField.value);
-        public void ExecuteCommand (string input) => _executeCommand(input);
-        public static void OutputToConsole (LogElement logElement) {
+        public void ExecuteCommand(string input) => _executeCommand(input);
+
+        public static void OutputToConsole(LogElement logElement)
+        {
             _logs.Add(logElement);
             _appendNewLine(logElement);
         }
 
         #region Initialization
-        protected void Awake() {
-            if (instance != null) {
+
+        protected void Awake()
+        {
+            if (instance != null)
+            {
                 Debug.LogWarning(this + " already has an istance.");
-            } else {
+            }
+            else
+            {
                 instance = this;
                 IsConsoleOpen = false;
             }
 
+            _uiDocument.RegisterUIReloadCallback(_initialize);
             _uiDocument.enabled = true;
         }
-        private void Start() {
-            _initialize();
-        }
+
 #if UNITY_EDITOR
         void Reset()
         {
+            _uiDocument.UnregisterUIReloadCallback(_initialize);
             _uiDocument.enabled = false;
         }
 #endif
-        private void Update() {
+
+        [OnExitingPlayMode]
+        private static void ClearConsole()
+        {
+            IsConsoleOpen = false;
+            _logs.Clear();
+            _logCounts.Clear();
+            _logVisuals.Clear();
+            _pinnedBlocks.Clear();
+
+            instance = null;
+        }
+
+        private void Update()
+        {
+            if (!isInitiailized) return;
+
             _outputTheQueueUpdate();
             _InputHandling();
             _updateVariableFields();
         }
 
-        protected virtual void OnDestroy() {
+        protected virtual void OnDestroy()
+        {
             instance = null;
         }
-        void OnEnable() {
-            Application.logMessageReceivedThreaded += _handleLog;
 
-        }
+        private void _initialize(PanelRenderer panelRenderer, VisualElement root, int version)
+        {
+            if (isInitiailized)
+            {
+                Debug.LogError("Need to handle ui reloading");
+                return;
+            }
 
-        void OnDisable() {
-            Application.logMessageReceived -= _handleLog;
-        }
-        private void _initialize() {
-            _root = _uiDocument.rootVisualElement;
+            DebugCommandRegistry.RegisterCommands(this);
+
+            isInitiailized = true;
+            _root = root;
             _root.style.display = DisplayStyle.None;
 
             _consoleView = instance._root.Q<ScrollView>("ConsoleView");
-            
+
             var clearConsoleButton = _root.Q<Button>("ClearConsole");
             clearConsoleButton.clicked += _clearConsole;
 
             var exitConsole = _root.Q<Button>("Exit");
             exitConsole.clicked += _toggleConsole;
-            
+
             var hideShowConsole = _root.Q<Button>("HideShow");
             hideShowConsole.clicked += _hideShowConsole;
-            
+
             var sizeIncreaseButton = _root.Q<Button>("SizePlus");
             sizeIncreaseButton.clicked += _increaseFontSize;
-            
+
             var sizeDecreaseButton = _root.Q<Button>("SizeMinus");
             sizeDecreaseButton.clicked += _decreaseFontSize;
-            
+
             var collapseConsole = _root.Q<Button>("CollapseConsole");
             collapseConsole.clicked += _collapseToggleConsole;
-            
+
             var hideLog = _root.Q<Button>("LogHide");
-            hideLog.clicked += ()=>_toggleLogHide(HolyLogType.Log);
-            
+            hideLog.clicked += () => _toggleLogHide(HolyLogType.Log);
+
             var hideWarning = _root.Q<Button>("WarningHide");
-            hideWarning.clicked += ()=>_toggleLogHide(HolyLogType.Warning);
-            
+            hideWarning.clicked += () => _toggleLogHide(HolyLogType.Warning);
+
             var hideError = _root.Q<Button>("ErrorHide");
-            hideError.clicked += ()=>_toggleLogHide(HolyLogType.Error);
-            
+            hideError.clicked += () => _toggleLogHide(HolyLogType.Error);
+
             _blocksUI = _root.Q<ScrollView>("Blocks");
 
             _searchField = _root.Q<TextField>("SearchBar");
-            
-            _searchField.RegisterCallback<FocusEvent>(evt => {
-                SetSelectedBlockIndex(-1);
-            });
 
-            _searchField.RegisterCallback<KeyUpEvent>(evt => {
+            _searchField.RegisterCallback<FocusEvent>(evt => { SetSelectedBlockIndex(-1); });
+
+            _searchField.RegisterCallback<KeyUpEvent>(evt =>
+            {
                 SetSelectedBlockIndex(-1);
                 _updateCommandBlocksList();
             });
-            
+
             _loadPins();
             _instantiateCommandBlocks();
             _updateCommandBlocksList();
@@ -146,122 +193,171 @@ namespace Holylib.DebugConsole {
 
             _keybindExistanceCheck();
         }
-        
-  #endregion
+
+        #endregion
 
         #region Input Handling
-        
+
         private double _lasTimeUpDownPressed;
-        private void _InputHandling() {
-            
+
+        private void _InputHandling()
+        {
+
             _keybindingInputCheck();
-            
-            if(!IsConsoleOpen) return;
-            
+
+            if (!IsConsoleOpen) return;
+
             _listenInput();
-            
-            if (Keyboard.current.backspaceKey.wasReleasedThisFrame) {
+
+            if (Keyboard.current.backspaceKey.wasReleasedThisFrame)
+            {
                 _backspacePressed();
-            } else if (Keyboard.current.tabKey.wasPressedThisFrame) {
+            }
+            else if (Keyboard.current.tabKey.wasPressedThisFrame)
+            {
                 _tabPressed();
-            } else if (Keyboard.current.escapeKey.wasPressedThisFrame || (Keyboard.current.ctrlKey.isPressed && Keyboard.current.fKey.wasPressedThisFrame)) {
+            }
+            else if (Keyboard.current.escapeKey.wasPressedThisFrame || (Keyboard.current.ctrlKey.isPressed && Keyboard.current.fKey.wasPressedThisFrame))
+            {
                 _backToSearchPressed();
-            } else if (Keyboard.current.enterKey.wasPressedThisFrame) {
+            }
+            else if (Keyboard.current.enterKey.wasPressedThisFrame)
+            {
                 _enterPressed();
-            } else if (Keyboard.current.upArrowKey.wasPressedThisFrame) {
+            }
+            else if (Keyboard.current.upArrowKey.wasPressedThisFrame)
+            {
                 _upArrowPressed();
-            } else if (Keyboard.current.downArrowKey.wasPressedThisFrame) {
+            }
+            else if (Keyboard.current.downArrowKey.wasPressedThisFrame)
+            {
                 _downArrowPressed();
             }
 
-            if (Keyboard.current.upArrowKey.wasReleasedThisFrame || Keyboard.current.downArrowKey.wasReleasedThisFrame) {
+            if (Keyboard.current.upArrowKey.wasReleasedThisFrame || Keyboard.current.downArrowKey.wasReleasedThisFrame)
+            {
                 _upOrDownStartedPressing();
             }
 
-            if (Keyboard.current.upArrowKey.isPressed && _lasTimeUpDownPressed != -1 && _lasTimeUpDownPressed + 0.5f < Time.time) {
+            if (Keyboard.current.upArrowKey.isPressed && _lasTimeUpDownPressed != -1 && _lasTimeUpDownPressed + 0.5f < Time.time)
+            {
                 _upArrowHolding();
-            } else if (Keyboard.current.downArrowKey.isPressed && _lasTimeUpDownPressed != -1 && _lasTimeUpDownPressed + 0.5f < Time.time) {
+            }
+            else if (Keyboard.current.downArrowKey.isPressed && _lasTimeUpDownPressed != -1 && _lasTimeUpDownPressed + 0.5f < Time.time)
+            {
                 _downArrowHolding();
             }
 
         }
-        
+
         #region Input Actions
-        private void _backspacePressed() {
-            if (!_hasParametersInSelection && GetSelectedBlockIndex() != -1) {
+
+        private void _backspacePressed()
+        {
+            if (!_hasParametersInSelection && GetSelectedBlockIndex() != -1)
+            {
                 SetSelectedBlockIndex(-1);
                 _updateCommandBlocksList();
             }
         }
-        private void _tabPressed() {
+
+        private void _tabPressed()
+        {
 
             return; // turned off for parameter option selection instead
-            if (_hasParametersInSelection) {
+            if (_hasParametersInSelection)
+            {
                 SelectedParameterIndex = (SelectedParameterIndex + 1 + _getSelectedCommandBlock.ParameterLength) % _getSelectedCommandBlock.ParameterLength;
                 _updateCommandBlocksList();
             }
         }
-        private void _backToSearchPressed() {
+
+        private void _backToSearchPressed()
+        {
             SelectedParameterIndex = -1;
             SetSelectedBlockIndex(-1);
 
             _updateCommandBlocksList();
         }
-        private void _enterPressed() {
+
+        private void _enterPressed()
+        {
             _getSelectedCommandBlock?.RunCommand();
             _updateCommandBlocksList();
         }
-        private void _upArrowPressed() {
+
+        private void _upArrowPressed()
+        {
             _upInList();
             _lasTimeUpDownPressed = Time.time;
         }
-        private void _downArrowPressed() {
+
+        private void _downArrowPressed()
+        {
             _downInList();
             _lasTimeUpDownPressed = Time.time;
         }
-        private void _upArrowHolding() {
+
+        private void _upArrowHolding()
+        {
             _upInList();
             _lasTimeUpDownPressed = Time.time - 0.45f;
         }
-        private void _downArrowHolding() {
+
+        private void _downArrowHolding()
+        {
             _downInList();
             _lasTimeUpDownPressed = Time.time - 0.45f;
         }
 
-        private void _upOrDownStartedPressing() {
+        private void _upOrDownStartedPressing()
+        {
             _lasTimeUpDownPressed = -1;
         }
-        
 
-  #endregion
-        
-        private void _preventDefaultTabBehaviour() {
-            _root.RegisterCallback<KeyDownEvent>(evt => {
-                if (evt.keyCode == KeyCode.Tab) {
+
+        #endregion
+
+        private void _preventDefaultTabBehaviour()
+        {
+            _root.RegisterCallback<KeyDownEvent>(evt =>
+            {
+                if (evt.keyCode == KeyCode.Tab)
+                {
                     evt.StopImmediatePropagation(); // prevents default next-field focus
                     evt.StopPropagation(); // optional, blocks text tab char
                 }
             }, TrickleDown.TrickleDown);
         }
-        
-  #endregion
+
+        #endregion
 
         #region Console
-        
+
         private string _commandListString;
-        private void _outputTheQueueUpdate() {
-            lock (_logQueue) {
-                while (_logQueue.Count > 0) {
+
+        private void _outputTheQueueUpdate()
+        {
+            lock (_logQueue)
+            {
+                while (_logQueue.Count > 0)
+                {
                     var logeElement = _logQueue.Dequeue();
                     OutputToConsole(logeElement);
                 }
             }
         }
-        private IEnumerator FocusNextFrame() {
+
+        private IEnumerator FocusNextFrame()
+        {
             yield return null;
             _searchField.Focus();
         }
-        private void _toggleConsole() {
+
+        private void _toggleConsole()
+        {
+            if (!isInitiailized) return;
+
             SetSelectedBlockIndex(-1);
 
             IsConsoleOpen = !IsConsoleOpen;
@@ -271,345 +367,420 @@ namespace Holylib.DebugConsole {
             _root.style.display =
                 _root.style.display == DisplayStyle.None ? DisplayStyle.Flex : DisplayStyle.None;
 
-            if (IsConsoleOpen) {
+            if (IsConsoleOpen)
+            {
                 StartCoroutine(FocusNextFrame());
             }
         }
-        private bool _modifyVariableCommand(CommandBlock commandBlock) {
-                try {
 
-                    object newVal;
-                    if (commandBlock.Field.GetType() == typeof(bool)) {
-                        newVal = !(bool)commandBlock.Field.GetValue(); // if type is bool, there is no input field, it just inverts the value
-                    } else {
-                        newVal = Convert.ChangeType(commandBlock.ParameterFields[0].GetValue(), commandBlock.Field.GetType());
-                    }
-                    
-                    commandBlock.Field.SetValue(newVal);
-                    return true;
+        private bool _modifyVariableCommand(CommandBlock commandBlock)
+        {
+            try
+            {
+
+                object newVal;
+                if (commandBlock.Field.GetFieldType() == typeof(bool))
+                {
+                    newVal = !(bool)commandBlock.Field.GetValue(); // if type is bool, there is no input field, it just inverts the value
                 }
-                catch (Exception e) {
-                    Debug.LogException(e);
-                    return false;
+                else
+                {
+                    newVal = Convert.ChangeType(commandBlock.ParameterFields[0].GetValue(), commandBlock.Field.GetFieldType());
                 }
+
+                commandBlock.Field.SetValue(newVal);
+                return true;
+            }
+            catch (Exception e)
+            {
+                Debug.LogException(e);
+                return false;
+            }
         }
-        
-        private bool _executeCommand (string input) {
-            if (string.IsNullOrWhiteSpace(input)) {
+
+        private bool _executeCommand(string input)
+        {
+            if (string.IsNullOrWhiteSpace(input))
+            {
                 _toggleConsole();
                 return true;
             }
 
 
             bool success;
-            
-            try {
+
+            try
+            {
                 success = DebugCommandRegistry.TryInvoke(input);
             }
-            catch (Exception e) {
+            catch (Exception e)
+            {
                 Debug.LogWarning($"Command not found: {input}, Exception: {e}");
                 success = false;
             }
-            
+
             return success;
         }
 
-        private static void _appendNewLine(LogElement element) {
-            
-            bool isCollapse = PlayerPrefs.GetInt(ConsoleCollapsePlayerPref,0) == 1 ? true : false;
+        private static void _appendNewLine(LogElement element)
+        {
+
+            bool isCollapse = PlayerPrefs.GetInt(ConsoleCollapsePlayerPref, 0) == 1 ? true : false;
 
 
-            if (isCollapse) {
-                if (_logCounts.ContainsKey(element)) {
+            if (isCollapse)
+            {
+                if (_logCounts.ContainsKey(element))
+                {
                     _logCounts[element]++;
-                    _updateCountOfConsoleLine(_logVisuals[element],_logCounts[element]);
+                    _updateCountOfConsoleLine(_logVisuals[element], _logCounts[element]);
 
-                } else {
-                    if (!instance._isTypeHidden(element.type)) {
+                }
+                else
+                {
+                    if (!instance._isTypeHidden(element.type))
+                    {
                         instance._instantiateConsoleLine(element);
                         _logCounts.Add(element, 1);
                     }
-                        
+
                 }
-            } else {
-                if (!instance._isTypeHidden(element.type)) {
+            }
+            else
+            {
+                if (!instance._isTypeHidden(element.type))
+                {
                     instance._instantiateConsoleLine(element);
                 }
 
             }
-            
-            
+
+
             instance._setFontSize();
         }
 
         private static readonly List<LogElement> _logs = new List<LogElement>();
         private static readonly Dictionary<LogElement, int> _logCounts = new();
         private static readonly Dictionary<LogElement, VisualElement> _logVisuals = new();
-        private static void _refreshOutput() {
+
+        private static void _refreshOutput()
+        {
 
             instance._consoleView.Clear();
 
-            bool isCollapse = PlayerPrefs.GetInt(ConsoleCollapsePlayerPref,0) == 1 ? true : false;
+            bool isCollapse = PlayerPrefs.GetInt(ConsoleCollapsePlayerPref, 0) == 1 ? true : false;
 
             _logCounts.Clear();
             _logVisuals.Clear();
-            
-            foreach (var entry in _logs) {
 
-                if (isCollapse) {
-                    if (!_logCounts.TryAdd(entry,1)) {
+            foreach (var entry in _logs)
+            {
+
+                if (isCollapse)
+                {
+                    if (!_logCounts.TryAdd(entry, 1))
+                    {
                         _logCounts[entry]++;
                     }
-                } else {
-                    if(!instance._isTypeHidden(entry.type))
+                }
+                else
+                {
+                    if (!instance._isTypeHidden(entry.type))
                         instance._instantiateConsoleLine(entry);
                 }
             }
 
-            if (isCollapse) {
-                foreach (var key in _logCounts) {
-                    if(!instance._isTypeHidden(key.Key.type))
-                        instance._instantiateConsoleLine(key.Key,key.Value);
+            if (isCollapse)
+            {
+                foreach (var key in _logCounts)
+                {
+                    if (!instance._isTypeHidden(key.Key.type))
+                        instance._instantiateConsoleLine(key.Key, key.Value);
                 }
             }
-            
-            
+
+
             instance._setFontSize();
         }
 
-        private void _clearConsole() {
+        private void _clearConsole()
+        {
             _logs.Clear();
             _refreshOutput();
         }
+
         private const string ConsoleVisibilityPlayerPref = "IsConsoleVisible";
 
-        private void _hideShowConsole() {
-            bool isVisible = PlayerPrefs.GetInt(ConsoleVisibilityPlayerPref, 1) == 1  ? true : false;
+        private void _hideShowConsole()
+        {
+            bool isVisible = PlayerPrefs.GetInt(ConsoleVisibilityPlayerPref, 1) == 1 ? true : false;
             isVisible = !isVisible;
             PlayerPrefs.SetInt(ConsoleVisibilityPlayerPref, isVisible ? 1 : 0);
 
             _setConsoleVisibility();
         }
 
-        private void _setConsoleVisibility() {
-            bool isVisible = PlayerPrefs.GetInt(ConsoleVisibilityPlayerPref, 1) == 1  ? true : false;
+        private void _setConsoleVisibility()
+        {
+            bool isVisible = PlayerPrefs.GetInt(ConsoleVisibilityPlayerPref, 1) == 1 ? true : false;
             _root.Q<ScrollView>("ConsoleView").style.visibility = isVisible ? Visibility.Visible : Visibility.Hidden;
-            
+
             var hideShowConsole = _root.Q<Button>("HideShow");
             hideShowConsole.text = isVisible ? "Hide Console" : "Show Console";
         }
-        
+
         private const string ConsoleCollapsePlayerPref = "IsConsoleCollapsed";
 
-        private void _collapseToggleConsole() {
-            bool isCollapsed = PlayerPrefs.GetInt(ConsoleCollapsePlayerPref, 0) == 1  ? true : false;
+        private void _collapseToggleConsole()
+        {
+            bool isCollapsed = PlayerPrefs.GetInt(ConsoleCollapsePlayerPref, 0) == 1 ? true : false;
             isCollapsed = !isCollapsed;
             PlayerPrefs.SetInt(ConsoleCollapsePlayerPref, isCollapsed ? 1 : 0);
 
             _setConsoleCollapse();
         }
 
-        private void _setConsoleCollapse() {
-            bool isCollapsed = PlayerPrefs.GetInt(ConsoleCollapsePlayerPref, 0) == 1  ? true : false;
+        private void _setConsoleCollapse()
+        {
+            bool isCollapsed = PlayerPrefs.GetInt(ConsoleCollapsePlayerPref, 0) == 1 ? true : false;
 
             var collapseConsole = _root.Q<Button>("CollapseConsole");
             collapseConsole.text = isCollapsed ? "UnCollapse Console" : "Collapse Console";
             _refreshOutput();
         }
-        
+
         private const string _logHidePlayerPref = "LogHideValue";
-        
-        private void _toggleLogHide(HolyLogType holyLogType) {
+
+        private void _toggleLogHide(HolyLogType holyLogType)
+        {
             int state = PlayerPrefs.GetInt(_logHidePlayerPref, 0);
-            
-            PlayerPrefs.SetInt(_logHidePlayerPref,state ^ (int)holyLogType );
-            
+
+            PlayerPrefs.SetInt(_logHidePlayerPref, state ^ (int)holyLogType);
+
             _setLogButtons();
-            
+
             _refreshOutput();
         }
 
-        private void _setLogButtons() {
+        private void _setLogButtons()
+        {
             var hideLog = _root.Q<Button>("LogHide");
-            if (_isTypeHidden(HolyLogType.Log)) {
+            if (_isTypeHidden(HolyLogType.Log))
+            {
                 hideLog.AddToClassList("log-button-pseudo-selected");
-            } else {
+            }
+            else
+            {
                 hideLog.RemoveFromClassList("log-button-pseudo-selected");
             }
 
             var hideWarning = _root.Q<Button>("WarningHide");
-            if (_isTypeHidden(HolyLogType.Warning)) {
+            if (_isTypeHidden(HolyLogType.Warning))
+            {
                 hideWarning.AddToClassList("log-button-pseudo-selected");
-            } else {
+            }
+            else
+            {
                 hideWarning.RemoveFromClassList("log-button-pseudo-selected");
             }
-            
+
             var hideError = _root.Q<Button>("ErrorHide");
-            if (_isTypeHidden(HolyLogType.Error)) {
+            if (_isTypeHidden(HolyLogType.Error))
+            {
                 hideError.AddToClassList("log-button-pseudo-selected");
-            } else {
+            }
+            else
+            {
                 hideError.RemoveFromClassList("log-button-pseudo-selected");
             }
         }
-        
-        private bool _isTypeHidden(HolyLogType holyLogType) {
+
+        private bool _isTypeHidden(HolyLogType holyLogType)
+        {
             int state = PlayerPrefs.GetInt(_logHidePlayerPref, 0);
-           return (state & (int)holyLogType) != 0;
+            return (state & (int)holyLogType) != 0;
         }
 
         private readonly int _defaultFontSize = 14;
         private const string FontPlayerPref = "DebugConsoleFontSize";
 
         private List<(VisualElement element, float ratio)> _trackedFontSizeElements = new();
-        
-        private void _trackFontSizeElement(VisualElement element) {
+
+        private void _trackFontSizeElement(VisualElement element)
+        {
             var textElements = element.Query(className: "unity-text-element").ToList();
-    
+
             // If no text children found, track the element itself
             var targets = textElements.Count > 0 ? textElements : new List<VisualElement> { element };
 
-            foreach (var target in targets) {
+            foreach (var target in targets)
+            {
                 float ratio = target.resolvedStyle.fontSize / _defaultFontSize;
                 _trackedFontSizeElements.Add((target, ratio));
             }
 
             element.RegisterCallback<DetachFromPanelEvent>(_ =>
-                    _trackedFontSizeElements.RemoveAll(entry => targets.Contains(entry.element))
-                );
+                _trackedFontSizeElements.RemoveAll(entry => targets.Contains(entry.element))
+            );
         }
 
-        private void _applyFontSize() {
+        private void _applyFontSize()
+        {
             int fontSize = PlayerPrefs.GetInt(FontPlayerPref, _defaultFontSize);
-            foreach (var (element, ratio) in _trackedFontSizeElements) {
+            foreach (var (element, ratio) in _trackedFontSizeElements)
+            {
                 element.style.fontSize = Mathf.RoundToInt(fontSize * ratio);
             }
         }
 
-        private void _setFontSize() {
+        private void _setFontSize()
+        {
             _applyFontSize();
         }
 
-        private void _increaseFontSize() {
+        private void _increaseFontSize()
+        {
             int fontSize = PlayerPrefs.GetInt(FontPlayerPref, _defaultFontSize);
             fontSize = Mathf.Clamp(fontSize + 1, 10, 60);
             PlayerPrefs.SetInt(FontPlayerPref, fontSize);
             _applyFontSize();
         }
 
-        private void _decreaseFontSize() {
+        private void _decreaseFontSize()
+        {
             int fontSize = PlayerPrefs.GetInt(FontPlayerPref, _defaultFontSize);
             fontSize = Mathf.Clamp(fontSize - 1, 10, 60);
             PlayerPrefs.SetInt(FontPlayerPref, fontSize);
             _applyFontSize();
         }
-        
-        private void _handleLog (string logString, string stackTrace, UnityEngine.LogType type) {
-            lock (_logQueue) {
-                
+
+        private void _handleLog(string logString, string stackTrace, UnityEngine.LogType type)
+        {
+            lock (_logQueue)
+            {
+
                 var customType = type switch
                 {
-                    UnityEngine.LogType.Log         => HolyLogType.Log,
-                    UnityEngine.LogType.Warning     => HolyLogType.Warning,
-                    UnityEngine.LogType.Error       => HolyLogType.Error,
-                    UnityEngine.LogType.Assert      => HolyLogType.Error,
-                    UnityEngine.LogType.Exception   => HolyLogType.Error,
-                    _                               => HolyLogType.None
+                    UnityEngine.LogType.Log => HolyLogType.Log,
+                    UnityEngine.LogType.Warning => HolyLogType.Warning,
+                    UnityEngine.LogType.Error => HolyLogType.Error,
+                    UnityEngine.LogType.Assert => HolyLogType.Error,
+                    UnityEngine.LogType.Exception => HolyLogType.Error,
+                    _ => HolyLogType.None
                 };
-                
-                
-                _logQueue.Enqueue(new LogElement(logString,stackTrace, customType,DateTime.Now.ToShortTimeString()));
+
+
+                _logQueue.Enqueue(new LogElement(logString, stackTrace, customType, DateTime.Now.ToShortTimeString()));
             }
         }
 
         private readonly Queue<LogElement> _logQueue = new Queue<LogElement>();
-        
-        public struct LogElement {
+
+        public struct LogElement
+        {
             public readonly string message;
             public readonly string stackTrace;
             public readonly HolyLogType type;
             public readonly string time;
-            public LogElement(string message,string stackTrace, HolyLogType type,string time) {
+
+            public LogElement(string message, string stackTrace, HolyLogType type, string time)
+            {
                 this.message = message;
                 this.type = type;
                 this.stackTrace = stackTrace;
                 this.time = time;
             }
         }
-        
+
         #region Console Visualisation
 
-        private static void _updateCountOfConsoleLine(VisualElement logElement,int newCount) {
-            if (newCount > 1) {
+        private static void _updateCountOfConsoleLine(VisualElement logElement, int newCount)
+        {
+            if (newCount > 1)
+            {
                 logElement.Q<Label>("Count").text = newCount.ToString();
-            } else {
+            }
+            else
+            {
                 logElement.Q<Label>("Count").text = "";
             }
 
         }
-        private void _instantiateConsoleLine(LogElement logElement,int count = 1) {
-            
+
+        private void _instantiateConsoleLine(LogElement logElement, int count = 1)
+        {
+
             string colorStart = "";
             string colorEnd = "";
             Color logColor = Color.white;
 
-            if (logElement.type == HolyLogType.Error || logElement.type == HolyLogType.Assert || logElement.type == HolyLogType.Exception) {
+            if (logElement.type == HolyLogType.Error || logElement.type == HolyLogType.Assert || logElement.type == HolyLogType.Exception)
+            {
                 colorStart = "<color=\"red\">";
                 colorEnd = "</color>";
-                logColor =  Color.red;
-            } else if (logElement.type == HolyLogType.Warning) {
+                logColor = Color.red;
+            }
+            else if (logElement.type == HolyLogType.Warning)
+            {
                 colorStart = "<color=\"yellow\">";
                 colorEnd = "</color>";
                 logColor = Color.yellow;
             }
-                
+
             string coloredMessage = ($"{colorStart}{logElement.message}{colorEnd}");
 
             var logLine = _consoleLine.Instantiate();
-            
+
             logLine.Q<Label>("Time").text = logElement.time;
 
             logLine.Q<VisualElement>("Icon").style.unityBackgroundImageTintColor = new StyleColor(logColor);
-            
+
             logLine.Q<Label>("MainDebugText").text = coloredMessage;
             var stackTraceField = logLine.Q<TextField>("DebugTextStackTrace");
             stackTraceField.value = logElement.stackTrace;
-            
+
             _root.Q<VisualElement>("ConsoleView").Add(logLine);
             _logVisuals[logElement] = logLine;
 
-            if (count > 1) {
+            if (count > 1)
+            {
                 logLine.Q<Label>("Count").text = count.ToString();
-            } else {
+            }
+            else
+            {
                 logLine.Q<Label>("Count").text = "";
             }
-            
-            
+
+
             stackTraceField.style.display = DisplayStyle.None;
-            
-            logLine.RegisterCallback<ClickEvent>(evt => {
-                if (!stackTraceField.Contains(evt.target as VisualElement)) {
-                    if (stackTraceField.style.display == DisplayStyle.None) {
+
+            logLine.RegisterCallback<ClickEvent>(evt =>
+            {
+                if (!stackTraceField.Contains(evt.target as VisualElement))
+                {
+                    if (stackTraceField.style.display == DisplayStyle.None)
+                    {
                         stackTraceField.style.display = DisplayStyle.Flex;
                         stackTraceField.Focus();
-                    } else {
+                    }
+                    else
+                    {
                         stackTraceField.style.display = DisplayStyle.None;
                     }
                 }
             });
-            
-            stackTraceField.RegisterCallback<BlurEvent>(evt => {
-                stackTraceField.style.display = DisplayStyle.None;
-            });
-            
+
+            stackTraceField.RegisterCallback<BlurEvent>(evt => { stackTraceField.style.display = DisplayStyle.None; });
+
 
             _trackFontSizeElement(logLine);
         }
-        
-        
-            #endregion
 
-  #endregion
-        
+
+        #endregion
+
+        #endregion
+
         #region Command Blocks
 
         private List<CommandBlock> _commandBlocks = new();
@@ -617,139 +788,176 @@ namespace Holylib.DebugConsole {
         private Dictionary<string, CommandBlock> _methodNameToCommandBlock = new();
 
         private ParameterField _lastSelectedParameterField;
-        private bool _hasParametersInSelection =>  _getSelectedCommandBlock?.ParameterLength > 0;
+        private bool _hasParametersInSelection => _getSelectedCommandBlock?.ParameterLength > 0;
         private int _visibleBlockCount;
         private int _selectedParameterIndex;
-        private int SelectedParameterIndex {
+
+        private int SelectedParameterIndex
+        {
             get => _selectedParameterIndex;
-            set {
+            set
+            {
                 _lastSelectedParameterField.UnFocus();
-                
+
                 _selectedParameterIndex = value;
 
                 if (_getSelectedCommandBlock == null || _getSelectedCommandBlock.ParameterLength <= 0 || SelectedParameterIndex < 0) return;
 
                 int a = 0;
-                foreach (var parameterField in _getSelectedCommandBlock.ParameterFields) {
-                    
-                    if (a == SelectedParameterIndex) {
+                foreach (var parameterField in _getSelectedCommandBlock.ParameterFields)
+                {
+
+                    if (a == SelectedParameterIndex)
+                    {
                         _lastSelectedParameterField = parameterField;
                         parameterField.Focus();
                         break;
                     }
+
                     a++;
                 }
             }
         }
+
         private int _selectedBlockIndex = -1;
         private int GetSelectedBlockIndex() => _selectedBlockIndex;
-        private void SetSelectedBlockIndex (int value,int manualParameterIndex = -1) {
-            bool isManualParameterIndex = manualParameterIndex != -1;
-            
-            if (value == _selectedBlockIndex) {
 
-                if (isManualParameterIndex && SelectedParameterIndex != manualParameterIndex) {
+        private void SetSelectedBlockIndex(int value, int manualParameterIndex = -1)
+        {
+            bool isManualParameterIndex = manualParameterIndex != -1;
+
+            if (value == _selectedBlockIndex)
+            {
+
+                if (isManualParameterIndex && SelectedParameterIndex != manualParameterIndex)
+                {
                     SelectedParameterIndex = manualParameterIndex;
                 }
-                
+
                 return;
             }
-            
-            if (value == -1 || value == _visibleBlockCount) {
+
+            if (value == -1 || value == _visibleBlockCount)
+            {
                 _selectedBlockIndex = -1;
                 SelectedParameterIndex = isManualParameterIndex ? manualParameterIndex : -1;
 
-            } else if (value == -2) {
+            }
+            else if (value == -2)
+            {
                 _selectedBlockIndex = _visibleBlockCount - 1;
                 SelectedParameterIndex = isManualParameterIndex ? manualParameterIndex : _getSelectedCommandBlock.ParameterLength - 1;
 
-            } else if (value >= 0 && value < _visibleBlockCount) {
+            }
+            else if (value >= 0 && value < _visibleBlockCount)
+            {
                 int prevBlockIndex = _selectedBlockIndex;
                 _selectedBlockIndex = value;
 
-                if (isManualParameterIndex) {
+                if (isManualParameterIndex)
+                {
                     SelectedParameterIndex = manualParameterIndex;
-                } else {
-                    if (value <= prevBlockIndex) {
+                }
+                else
+                {
+                    if (value <= prevBlockIndex)
+                    {
                         SelectedParameterIndex = _getSelectedCommandBlock.ParameterLength - 1;
-                    } else {
+                    }
+                    else
+                    {
                         SelectedParameterIndex = _getSelectedCommandBlock.ParameterLength != 0 ? 0 : -1;
                     }
                 }
-                
 
 
-            } else {
+
+            }
+            else
+            {
                 Debug.LogError($"{value} is not a valid selected block index");
             }
 
             _updateCommandBlocksList();
         }
 
-        private CommandBlock _getSelectedCommandBlock {
-            get {
-                return _selectedBlockIndex != -1 ? _visibleCommandBlocks[_selectedBlockIndex] : null;
-            }
+        private CommandBlock _getSelectedCommandBlock
+        {
+            get { return _selectedBlockIndex != -1 ? _visibleCommandBlocks[_selectedBlockIndex] : null; }
         }
 
-        private class CommandBlock {
+        private class CommandBlock
+        {
             public string MethodName { get; private set; }
-            public DebugGroupStyle GroupStyle{ get; private set; }
+            public DebugGroupStyle GroupStyle { get; private set; }
             public bool IsPinned => _pinnedBlocks.Contains(MethodName);
             public VariableField Field { get; private set; }
             public ParameterInfo[] Parameters { get; private set; }
-            public int ParameterLength => Mathf.Max(ParameterFields?.Count ?? 0,Parameters?.Length ?? 0);
+            public int ParameterLength => Mathf.Max(ParameterFields?.Count ?? 0, Parameters?.Length ?? 0);
             public List<ParameterField> ParameterFields;
             public VisualElement VisualBlock;
             public VisualElement ParameterParent;
 
             private string[] parameterOptionKeys;
             public Label VariableFieldText;
-            public List<string> GetOptionsForParameter(int index) {
-                if(parameterOptionKeys == null || index >= parameterOptionKeys.Length) return null;
+
+            public List<string> GetOptionsForParameter(int index)
+            {
+                if (parameterOptionKeys == null || index >= parameterOptionKeys.Length) return null;
                 return DebugCommandOptionRegistery.Get(parameterOptionKeys[index]);
             }
-            
 
-            public void Initialize(DebugCommandRegistry.MethodGroup methodGroup) {
+
+            public void Initialize(DebugCommandRegistry.MethodGroup methodGroup)
+            {
                 bool isVariableField = methodGroup.method == null;
-                
+
                 MethodName = !isVariableField ? methodGroup.method.Name : methodGroup.field?.Name ?? methodGroup.property.Name;
                 GroupStyle = methodGroup.group;
                 Parameters = !isVariableField ? methodGroup.method.GetParameters() : Array.Empty<ParameterInfo>();
-                Field = isVariableField ? new VariableField(methodGroup.field,methodGroup.property,methodGroup.isReadOnly) : null;
+                Field = isVariableField ? new VariableField(methodGroup.field, methodGroup.property, methodGroup.isReadOnly) : null;
                 parameterOptionKeys = methodGroup.parameterOptionKeys;
                 _createVisualBlock();
                 RefreshVariable();
 
-                if (isVariableField) {
+                if (isVariableField)
+                {
                     instance._commandBlocksToUpdate.Add(this);
                 }
             }
-            
-            public void RunCommand() {
+
+            public void RunCommand()
+            {
 
                 instance.SetSelectedBlockIndex(instance._visibleCommandBlocks.IndexOf(this));
 
-                if (Field != null) {
-                    
-                    if(Field.IsReadOnly) return;
-                    
+                if (Field != null)
+                {
+
+                    if (Field.IsReadOnly) return;
+
                     instance._playExecuteAnimation(VisualBlock.Children().First(), instance._modifyVariableCommand(this));
                     RefreshVariable();
                     return;
                 }
-                
-                if (ParameterLength == 0) {
+
+                if (ParameterLength == 0)
+                {
                     instance._playExecuteAnimation(VisualBlock.Children().First(), instance._executeCommand(MethodName));
-                } else {
+                }
+                else
+                {
                     string fullCommand = MethodName;
 
-                    foreach (var field in ParameterFields) {
+                    foreach (var field in ParameterFields)
+                    {
 
-                        if (field.Type == typeof(string)) {
+                        if (field.Type == typeof(string))
+                        {
                             fullCommand += $" \"{field.GetValue()}\"";
-                        } else {
+                        }
+                        else
+                        {
                             fullCommand += $" {field.GetValue()}";
                         }
 
@@ -759,86 +967,105 @@ namespace Holylib.DebugConsole {
                 }
             }
 
-            private void _createVisualBlock() {
-                
+            private void _createVisualBlock()
+            {
                 var parameterCommandBlockOutput = instance._instantiateParameterCommandBlock(this);
                 VisualBlock = parameterCommandBlockOutput.visualElement;
                 ParameterFields = parameterCommandBlockOutput.parameterFields;
 
                 VisualBlock.name = GroupStyle.Name;
 
-                if (IsPinned) {
+                if (IsPinned)
+                {
                     VisualBlock.Q<Button>("Pin").text = "Unpin";
                     VisualBlock.name += "_" + _pinnedGroupName;
-                } else {
+                }
+                else
+                {
                     VisualBlock.Q<Button>("Pin").text = "Pin";
                 }
                 
-                VisualBlock.Children().First().style.borderLeftColor = GroupStyle.Color;
+                VisualElement visualElement = VisualBlock.Q<VisualElement>("ParameterCommandBlock");
+                visualElement.style.borderLeftColor = GroupStyle.Color;
             }
 
-            public void RefreshVariable() {
-                if(VariableFieldText != null)
+            public void RefreshVariable()
+            {
+                if (VariableFieldText != null)
                     VariableFieldText.text = Field != null ? Field.GetValue()?.ToString() : "";
             }
 
-            public override string ToString() {
+            public override string ToString()
+            {
                 return $"{MethodName}-{GroupStyle.Name}";
             }
         }
-        
-        private class VariableField {
+
+        private class VariableField
+        {
             private FieldInfo _field;
             private PropertyInfo _property;
             public readonly bool IsReadOnly;
-            
-            public VariableField(FieldInfo field, PropertyInfo property,bool isReadOnly) {
+
+            public VariableField(FieldInfo field, PropertyInfo property, bool isReadOnly)
+            {
                 _field = field;
                 _property = property;
                 IsReadOnly = isReadOnly;
             }
 
-            public Type GetType() {
+            public Type GetFieldType()
+            {
                 return _field != null ? _field.FieldType : _property.PropertyType;
             }
 
-            public object GetValue() {
+            public object GetValue()
+            {
                 return _field != null ? _field.GetValue(null) : _property.GetValue(null);
             }
 
-            public void SetValue (object value) {
-                if (_field != null) {
+            public void SetValue(object value)
+            {
+                if (_field != null)
+                {
                     _field.SetValue(null, value);
-                } else {
+                }
+                else
+                {
                     _property.SetValue(null, value);
                 }
             }
         }
 
         private List<CommandBlock> _commandBlocksToUpdate = new();
-        private void _updateVariableFields() {
-            
-            if(!IsConsoleOpen) return;
-            
-            foreach (var commandBlock in _commandBlocksToUpdate) {
+
+        private void _updateVariableFields()
+        {
+
+            if (!IsConsoleOpen) return;
+
+            foreach (var commandBlock in _commandBlocksToUpdate)
+            {
                 commandBlock.RefreshVariable();
             }
         }
-        
+
         #region Visuals
-        private void _instantiateCommandBlocks() {
-            
+
+        private void _instantiateCommandBlocks()
+        {
+
             _loadKeybinds();
-            
+
             SetSelectedBlockIndex(-1);
-            
+
             _blocksUI.Clear();
             _commandBlocks.Clear();
             _methodNameToCommandBlock.Clear();
-            
+
             Dictionary<DebugGroupStyle, List<VisualElement>> groups = new();
 
-    
+
             // Create Pinned Group
             var pinnedGroup = _commandBlockGroup.Instantiate();
             pinnedGroup.name = _pinnedGroupName;
@@ -846,103 +1073,131 @@ namespace Holylib.DebugConsole {
             _blocksUI.Add(pinnedGroup);
 
 
-            foreach (var command in DebugCommandRegistry.Commands.OrderBy(c=>c.Value.group.Name)) {
+            foreach (var command in DebugCommandRegistry.Commands.OrderBy(c => c.Value.group.Name))
+            {
                 CommandBlock commandBlock = new();
                 commandBlock.Initialize(command.Value);
                 _commandBlocks.Add(commandBlock);
-                if (!_methodNameToCommandBlock.TryAdd(commandBlock.MethodName, commandBlock)) {
+                if (!_methodNameToCommandBlock.TryAdd(commandBlock.MethodName, commandBlock))
+                {
                     Debug.LogError($"There are multiple commands with the nane '{commandBlock.MethodName}'\nChange their names.");
                 }
-                
-                if (!groups.ContainsKey(commandBlock.GroupStyle)) {
-                    groups[commandBlock.GroupStyle] = new();
+
+                if (!groups.ContainsKey(commandBlock.GroupStyle))
+                {
+                    groups[commandBlock.GroupStyle] = new List<VisualElement>();
                 }
 
-                if (commandBlock.IsPinned) {
+                if (commandBlock.IsPinned)
+                {
                     _blocksUI.Q<TemplateContainer>(_pinnedGroupName).Q<VisualElement>("Blocks").Add(commandBlock.VisualBlock);
-                } else {
+                }
+                else
+                {
                     groups[command.Value.group].Add(commandBlock.VisualBlock);
                 }
             }
-            
-            foreach (var groupList in groups) {
+
+            foreach (var groupList in groups)
+            {
 
                 var group = _commandBlockGroup.Instantiate();
                 group.name = groupList.Key.Name;
                 group.Q<Label>().text = $"{groupList.Key.Name}";
 
-                foreach (var block in groupList.Value) {
+                foreach (var block in groupList.Value)
+                {
                     group.Q<VisualElement>("Blocks").Add(block);
                 }
+
                 _blocksUI.Add(group);
             }
-            
+
             _visibleBlockCount = DebugCommandRegistry.Commands.Count;
         }
-        private void _updateCommandBlocksList() {
+
+        private void _updateCommandBlocksList()
+        {
             string input = _searchField.value.ToLower();
 
             int blocksCount = 0;
             int visibleBlockCount = 0;
 
-            Dictionary<string,bool> visibleGroups = new();
+            Dictionary<string, bool> visibleGroups = new();
             _visibleCommandBlocks.Clear();
             List<CommandBlock> pinnedBlocks = new();
-            
-            foreach (var commandBlock in _commandBlocks) {
+
+            foreach (var commandBlock in _commandBlocks)
+            {
                 blocksCount++;
-                
-                if (commandBlock.MethodName.ToLower().Contains(input) || commandBlock.GroupStyle.Name.ToLower().Contains(input) || (commandBlock.IsPinned && _pinnedGroupName.ToLower().Contains(input))) {
+
+                if (commandBlock.MethodName.ToLower().Contains(input) || commandBlock.GroupStyle.Name.ToLower().Contains(input) ||
+                    (commandBlock.IsPinned && _pinnedGroupName.ToLower().Contains(input)))
+                {
                     visibleBlockCount++;
 
-                    if (commandBlock.IsPinned) {
+                    if (commandBlock.IsPinned)
+                    {
                         visibleGroups.TryAdd(_pinnedGroupName, true);
                         pinnedBlocks.Add(commandBlock);
-                    } else {
+                    }
+                    else
+                    {
                         visibleGroups.TryAdd(commandBlock.GroupStyle.Name, true);
                         _visibleCommandBlocks.Add(commandBlock);
                     }
-                    
+
                     commandBlock.VisualBlock.style.display = new StyleEnum<DisplayStyle>(DisplayStyle.Flex);
-                    
+
                     commandBlock.VisualBlock.Children().First().RemoveFromClassList("command-block-pseudo-hover");
-                    
-                } else {
+
+                }
+                else
+                {
                     commandBlock.VisualBlock.style.display = new StyleEnum<DisplayStyle>(DisplayStyle.None);
                 }
             }
 
             // hide groups with no blocks
-            foreach (var group in _blocksUI.Children()) {
-                
-                if (visibleGroups.ContainsKey(group.name)) {
+            foreach (var group in _blocksUI.Children())
+            {
+
+                if (visibleGroups.ContainsKey(group.name))
+                {
                     group.style.display = new StyleEnum<DisplayStyle>(DisplayStyle.Flex);
-                } else {
+                }
+                else
+                {
                     group.style.display = new StyleEnum<DisplayStyle>(DisplayStyle.None);
                 }
             }
-            
+
             // add pinned blocks to beginning
-            _visibleCommandBlocks.InsertRange(0,pinnedBlocks);
-            
+            _visibleCommandBlocks.InsertRange(0, pinnedBlocks);
+
             // focus
-            if (GetSelectedBlockIndex() == -1) {
+            if (GetSelectedBlockIndex() == -1)
+            {
                 _searchField.Focus();
-            } else if (_getSelectedCommandBlock?.ParameterLength <= 0) {
+            }
+            else if (_getSelectedCommandBlock?.ParameterLength <= 0)
+            {
                 _getSelectedCommandBlock.VisualBlock.Focus();
             }
 
-            if (GetSelectedBlockIndex() != -1) {
+            if (GetSelectedBlockIndex() != -1)
+            {
                 _blocksUI.ScrollTo(_getSelectedCommandBlock.VisualBlock);
                 _getSelectedCommandBlock.VisualBlock.Children().First().AddToClassList("command-block-pseudo-hover");
             }
 
 
             _visibleBlockCount = visibleBlockCount;
-            
+
         }
 
-        private (VisualElement visualElement,List<ParameterField> parameterFields) _instantiateParameterCommandBlock (CommandBlock commandBlock) {
+        private (VisualElement visualElement, List<ParameterField> parameterFields) _instantiateParameterCommandBlock(CommandBlock commandBlock)
+        {
             var block = _parameterCommandBlock.Instantiate();
             block.Q<Label>("CommandBlockLabel").text = commandBlock.MethodName;
             _blocksUI.Add(block);
@@ -950,178 +1205,203 @@ namespace Holylib.DebugConsole {
             List<ParameterField> parameterFields = new();
 
             int parameterIndex = 0;
-            foreach (var parameter in commandBlock.Parameters) {
+            foreach (var parameter in commandBlock.Parameters)
+            {
                 int ind = parameterIndex;
-                TemplateContainer parameterField;
-                
-                var options = commandBlock.GetOptionsForParameter(parameterIndex);
-                if (options != null) {
-                    parameterField = _commandBlockParameter.Instantiate();
-                    parameterField.pickingMode = PickingMode.Ignore;
-                    
+
+                List<string> options = commandBlock.GetOptionsForParameter(parameterIndex);
+                TemplateContainer parameterField = _commandBlockParameter.Instantiate();
+                parameterField.pickingMode = PickingMode.Ignore;
+
+                if (options != null)
+                {
                     var dropdown = parameterField.Q<TextField>();
                     dropdown.label = parameter.Name;
+                    
+                    var combobox = new ComboBox(parameterField, () => commandBlock.GetOptionsForParameter(ind), _comboBoxPopUp);
+                    if (commandBlock.Parameters.Length <= 1)
+                    {
+                        combobox.OnValueClicked += OnValueClicked;
 
-                    
-                    var combobox = new ComboBox(parameterField,()=>commandBlock.GetOptionsForParameter(ind),_comboBoxPopUp);
-                    
-                    dropdown.RegisterCallback<FocusEvent>(evt => {
-                        SetSelectedBlockIndex(instance._visibleCommandBlocks.IndexOf(commandBlock),ind);
-                    });
-                    
-                    parameterFields.Add(new(() => combobox.Value, parameter.ParameterType,()=> {
+                        void OnValueClicked(string value)
+                        {
+                            commandBlock.RunCommand();
+                        }
+                    }
+
+                    dropdown.RegisterCallback<FocusEvent>(evt => { SetSelectedBlockIndex(instance._visibleCommandBlocks.IndexOf(commandBlock), ind); });
+
+                    parameterFields.Add(new ParameterField(() => combobox.Value, parameter.ParameterType, () =>
+                    {
                         dropdown.Focus();
                         combobox.OpenPopup();
-                    }, () => {
+                    }, () =>
+                    {
                         dropdown.Blur();
                         combobox.ClosePopup();
                     }));
-                } else {
-                    parameterField = _commandBlockParameter.Instantiate();
-                    parameterField.pickingMode = PickingMode.Ignore;
-                    
-                    var field = parameterField.Q<TextField>("CommandBlockParameter");
-                    
-                    field.label = parameter.Name;
-                    field.RegisterCallback<FocusEvent>(evt => {
-                        SetSelectedBlockIndex(instance._visibleCommandBlocks.IndexOf(commandBlock),ind);
-                    });
-                    
-                    parameterFields.Add(new(() => field.value, parameter.ParameterType,field.Focus,field.Blur));
                 }
-                
-                
+                else
+                {
+                    var field = parameterField.Q<TextField>("CommandBlockParameter");
+
+                    field.label = parameter.Name;
+                    field.RegisterCallback<FocusEvent>(evt => { SetSelectedBlockIndex(instance._visibleCommandBlocks.IndexOf(commandBlock), ind); });
+
+                    parameterFields.Add(new ParameterField(() => field.value, parameter.ParameterType, field.Focus, field.Blur));
+                }
 
                 block.Q<VisualElement>("Parameters").Add(parameterField);
                 parameterIndex++;
             }
-            
+
             // Variable Field
             commandBlock.VariableFieldText = block.Q<Label>("VariableValue");
 
-            if (commandBlock.Field != null) {
-                
-                if (commandBlock.Field.GetType() == typeof(bool)) {
+            if (commandBlock.Field != null)
+            {
+
+                if (commandBlock.Field.GetFieldType() == typeof(bool))
+                {
 
 
-                } else if(!commandBlock.Field.IsReadOnly) {
+                }
+                else if (!commandBlock.Field.IsReadOnly)
+                {
                     TemplateContainer parameterField = _commandBlockParameter.Instantiate();
                     parameterField.pickingMode = PickingMode.Ignore;
-                    
+
                     var field = parameterField.Q<TextField>("CommandBlockParameter");
                     field.label = " ";
-                    field.RegisterCallback<FocusEvent>(evt => {
-                        SetSelectedBlockIndex(instance._visibleCommandBlocks.IndexOf(commandBlock),parameterIndex);
-                    });
-                
-                    parameterFields.Add(new(()=>field.value, commandBlock.Field.GetType(),field.Focus,field.Blur));
+                    field.RegisterCallback<FocusEvent>(evt => { SetSelectedBlockIndex(instance._visibleCommandBlocks.IndexOf(commandBlock), parameterIndex); });
+
+                    parameterFields.Add(new ParameterField(() => field.value, commandBlock.Field.GetFieldType(), field.Focus, field.Blur));
 
                     block.Q<VisualElement>("Parameters").Add(parameterField);
                 }
-                
+
             }
-            
-            
+
+
             // keybinds
             var keybindButton = block.Q<Button>("KeybindButton");
-            
-            if(commandBlock.Field?.IsReadOnly ?? false)
+
+            if (commandBlock.Field?.IsReadOnly ?? false)
                 keybindButton.style.display = new StyleEnum<DisplayStyle>(DisplayStyle.None);
-            
-            keybindButton.RegisterCallback<ClickEvent>((evt) => {
 
-                if (string.Equals(keybindButton.text,"Listening")) {
+            keybindButton.RegisterCallback<ClickEvent>((evt) =>
+            {
 
-                    _setKeybindAndButton(keybindButton,commandBlock,Key.None);
+                if (string.Equals(keybindButton.text, "Listening"))
+                {
+
+                    _setKeybindAndButton(keybindButton, commandBlock, Key.None);
                     _saveKeybinds();
                     _disableInputListening();
-                } else {
+                }
+                else
+                {
                     keybindButton.text = "Listening";
                     keybindButton.AddToClassList("log-button-pseudo-selected");
-                    
-                    _enableInputListening(k => {
-                        _setKeybindAndButton(keybindButton,commandBlock,k);
+
+                    _enableInputListening(k =>
+                    {
+                        _setKeybindAndButton(keybindButton, commandBlock, k);
                         _saveKeybinds();
-                    }, () => {
-                        
-                        if (_keybindings.TryGetValue(commandBlock.MethodName, out var keybinding)) {
+                    }, () =>
+                    {
+
+                        if (_keybindings.TryGetValue(commandBlock.MethodName, out var keybinding))
+                        {
                             keybindButton.text = keybinding.ToString();
-                        } else {
+                        }
+                        else
+                        {
                             keybindButton.text = "Keybind";
                         }
-                        
+
                         keybindButton.RemoveFromClassList("log-button-pseudo-selected");
                     });
                 }
-                
+
             });
-            
+
             // load keybinding
-            if (_keybindings.TryGetValue(commandBlock.MethodName, out var keybinding)) {
-                _setKeybindAndButton(keybindButton,commandBlock,keybinding);
+            if (_keybindings.TryGetValue(commandBlock.MethodName, out var keybinding))
+            {
+                _setKeybindAndButton(keybindButton, commandBlock, keybinding);
             }
-            
 
-            block.Q<Button>("Pin").clicked += () => {
-                _pinBlock(commandBlock.MethodName);
-            };
 
-            block.RegisterCallback<MouseUpEvent>((a) => {
+            block.Q<Button>("Pin").clicked += () => { _pinBlock(commandBlock.MethodName); };
+
+            block.RegisterCallback<MouseUpEvent>((a) =>
+            {
                 if (a.target != block.Children().First()) return;
                 commandBlock.RunCommand();
             });
 
-            return (block,parameterFields);
+            return (block, parameterFields);
         }
-        
-        
-        private struct ParameterField {
+
+
+        private struct ParameterField
+        {
 
             private Action _focus;
             private Action _unfocus;
             private Func<string> _getValue;
             public Type Type;
-            public ParameterField(Func<string> getValueFunc, Type type,Action focus,Action unfocus) {
+
+            public ParameterField(Func<string> getValueFunc, Type type, Action focus, Action unfocus)
+            {
                 _getValue = getValueFunc;
                 Type = type;
                 _focus = focus;
                 _unfocus = unfocus;
             }
 
-            public string GetValue() {
+            public string GetValue()
+            {
                 return _getValue();
             }
 
-            public void Focus() {
+            public void Focus()
+            {
                 _focus.Invoke();
             }
-            
-            public void UnFocus() {
+
+            public void UnFocus()
+            {
                 _unfocus?.Invoke();
             }
         }
-        
-        private void _playExecuteAnimation (VisualElement block, bool isSuccessfull) {
+
+        private void _playExecuteAnimation(VisualElement block, bool isSuccessfull)
+        {
 
             string classStyle = isSuccessfull ? "command-block-pseudo-execute" : "command-block-pseudo-cantexecute";
 
             block.AddToClassList(classStyle);
 
-            block.schedule.Execute(() => {
-                block.RemoveFromClassList(classStyle);
-            }).StartingIn(200);
+            block.schedule.Execute(() => { block.RemoveFromClassList(classStyle); }).StartingIn(200);
         }
 
-#endregion
-        
+        #endregion
+
         #region Pins
 
         private static List<string> _pinnedBlocks = new();
         private const string _pinnedGroupName = "Pinned";
-        private void _pinBlock (string methodName) {
-            if (_pinnedBlocks.Contains(methodName)) {
+
+        private void _pinBlock(string methodName)
+        {
+            if (_pinnedBlocks.Contains(methodName))
+            {
                 _pinnedBlocks.Remove(methodName);
-            } else {
+            }
+            else
+            {
                 _pinnedBlocks.Add(methodName);
             }
 
@@ -1130,9 +1410,11 @@ namespace Holylib.DebugConsole {
             _updateCommandBlocksList();
         }
 
-        private void _savePins() {
+        private void _savePins()
+        {
             string condensedPins = "";
-            foreach (var pins in _pinnedBlocks) {
+            foreach (var pins in _pinnedBlocks)
+            {
                 condensedPins += $"{pins}%";
             }
 
@@ -1142,149 +1424,183 @@ namespace Holylib.DebugConsole {
             PlayerPrefs.SetString($"PinnedCommands", condensedPins);
         }
 
-        private void _loadPins() {
+        private void _loadPins()
+        {
             _pinnedBlocks.Clear();
             string condensedPins = PlayerPrefs.GetString("PinnedCommands", "");
 
             if (condensedPins.Length == 0) return;
 
-            foreach (var pins in condensedPins.Split('%')) {
+            foreach (var pins in condensedPins.Split('%'))
+            {
                 _pinnedBlocks.Add(pins);
             }
         }
 
-  #endregion
+        #endregion
 
         #region Navigation
 
-        private void _upInList() {
+        private void _upInList()
+        {
             if (_visibleBlockCount == 0) return;
 
-            if(SelectedParameterIndex > 0){
+            if (SelectedParameterIndex > 0)
+            {
                 SelectedParameterIndex--;
-            } else {
+            }
+            else
+            {
                 SetSelectedBlockIndex(GetSelectedBlockIndex() - 1);
             }
         }
 
-        private void _downInList() {
+        private void _downInList()
+        {
             if (_visibleBlockCount == 0) return;
-            
-            if(SelectedParameterIndex < _getSelectedCommandBlock?.ParameterLength-1){
+
+            if (SelectedParameterIndex < _getSelectedCommandBlock?.ParameterLength - 1)
+            {
                 SelectedParameterIndex++;
-            } else {
+            }
+            else
+            {
                 SetSelectedBlockIndex(GetSelectedBlockIndex() + 1);
             }
         }
 
-  #endregion
-        
+        #endregion
 
-    #endregion
 
-    #region Keybinds
+        #endregion
+
+        #region Keybinds
 
         private const string _keybindSavePlayerPref = "CommandKeybinds";
         private const string _keybindSaveSeperator = "%";
-        private Dictionary<string,Key> _keybindings = new();
+        private Dictionary<string, Key> _keybindings = new();
 
-        private void _saveKeybinds() {
+        private void _saveKeybinds()
+        {
             string save = "";
             var keybindings = _keybindings.ToList();
-            for (int i = 0;i< _keybindings.Count;i++) {
+            for (int i = 0; i < _keybindings.Count; i++)
+            {
 
-                if (i != 0) {
+                if (i != 0)
+                {
                     save += _keybindSaveSeperator;
                 }
+
                 save += $"{keybindings[i].Key}-{(int)keybindings[i].Value}";
             }
-            
-            PlayerPrefs.SetString(_keybindSavePlayerPref,save);
+
+            PlayerPrefs.SetString(_keybindSavePlayerPref, save);
         }
 
-        private void _loadKeybinds() {
+        private void _loadKeybinds()
+        {
             _keybindings.Clear();
-            var save = PlayerPrefs.GetString(_keybindSavePlayerPref,"");
-            if (save  == "") return;
-            
-            
-            foreach (var keybinds in save.Split(_keybindSaveSeperator)) {
+            var save = PlayerPrefs.GetString(_keybindSavePlayerPref, "");
+            if (save == "") return;
+
+
+            foreach (var keybinds in save.Split(_keybindSaveSeperator))
+            {
                 var values = keybinds.Split('-');
 
                 var methodName = values[0];
                 Key keyCode = Enum.Parse<Key>(values[1]);
-                
-                if (!_keybindings.TryAdd(methodName, keyCode)) {
+
+                if (!_keybindings.TryAdd(methodName, keyCode))
+                {
                     Debug.LogError($"Couldn't load the keybind '{keyCode.ToString()}' for {methodName}");
                 }
             }
-            
+
         }
 
-        private bool _setKeybinding(string methodName,Key keycode) {
+        private bool _setKeybinding(string methodName, Key keycode)
+        {
 
-            if (keycode == Key.None) {
+            if (keycode == Key.None)
+            {
                 _keybindings.Remove(methodName);
                 return false;
             }
-            
+
             _keybindings[methodName] = keycode;
-            
+
             return true;
         }
 
-        private void _keybindingInputCheck() {
-            
-            if(!Keyboard.current[_debugCommandKey].isPressed) return;
+        private void _keybindingInputCheck()
+        {
+
+            if (!Keyboard.current[_debugCommandKey].isPressed) return;
 
 
-            foreach (var keybinding in _keybindings) {
-                if (Keyboard.current[keybinding.Value].wasReleasedThisFrame) {
+            foreach (var keybinding in _keybindings)
+            {
+                if (Keyboard.current[keybinding.Value].wasReleasedThisFrame)
+                {
 
-                    if (_methodNameToCommandBlock.TryGetValue(keybinding.Key, out var block)) {
+                    if (_methodNameToCommandBlock.TryGetValue(keybinding.Key, out var block))
+                    {
                         block.RunCommand();
-                    } else {
+                    }
+                    else
+                    {
                         Debug.LogWarning($"Couldn't run {block.MethodName}");
                     }
                 }
             }
         }
 
-        private void _keybindExistanceCheck() {
+        private void _keybindExistanceCheck()
+        {
             List<string> keybindsToRemove = new();
-            
-            foreach (var keybinding in _keybindings) {
-                if (_methodNameToCommandBlock.TryGetValue(keybinding.Key, out var block)) {
-                    
-                } else {
+
+            foreach (var keybinding in _keybindings)
+            {
+                if (_methodNameToCommandBlock.TryGetValue(keybinding.Key, out var block))
+                {
+
+                }
+                else
+                {
                     keybindsToRemove.Add(keybinding.Key);
                 }
             }
-            
-            if (keybindsToRemove.Count > 0) {
+
+            if (keybindsToRemove.Count > 0)
+            {
                 string keybindNames = "";
-                foreach (var keybind in keybindsToRemove) {
+                foreach (var keybind in keybindsToRemove)
+                {
                     keybindNames += $"{_keybindings[keybind]} - {keybind}\n";
                     _keybindings.Remove(keybind);
                 }
-                
+
                 Debug.Log($"HolyDebugConsole: Unused keybinds are removed\n{keybindNames}");
-                
+
                 _saveKeybinds();
             }
         }
 
-        private void _listenInput() {
+        private void _listenInput()
+        {
             if (!_isListening) return;
-            
+
             if (Keyboard.current.anyKey.wasPressedThisFrame)
             {
                 foreach (var key in Keyboard.current.allKeys)
                 {
-                    if (key.wasPressedThisFrame) {
+                    if (key.wasPressedThisFrame)
+                    {
                         _onKeySelectedAction(key.keyCode);
                         _disableInputListening();
-                        
+
                         break;
                     }
                 }
@@ -1294,88 +1610,111 @@ namespace Holylib.DebugConsole {
         private Action _onKeyNotSelectedAction;
         private Action<Key> _onKeySelectedAction;
         private bool _isListening;
-        private void _enableInputListening(Action<Key> onKeySelected,Action onKeyNotSelectedAction) {
+
+        private void _enableInputListening(Action<Key> onKeySelected, Action onKeyNotSelectedAction)
+        {
             _disableInputListening();
-            _onKeySelectedAction =  onKeySelected;
+            _onKeySelectedAction = onKeySelected;
             _isListening = true;
-            _onKeyNotSelectedAction =  onKeyNotSelectedAction;
+            _onKeyNotSelectedAction = onKeyNotSelectedAction;
         }
-        
-        private void _disableInputListening() {
+
+        private void _disableInputListening()
+        {
             _onKeyNotSelectedAction?.Invoke();
             _onKeyNotSelectedAction = null;
             _isListening = false;
             _onKeySelectedAction = null;
         }
 
-        private void _setKeybindAndButton(Button keybindButton,CommandBlock commandBlock,Key key) {
-            if (_setKeybinding(commandBlock.MethodName, key)) {
+        private void _setKeybindAndButton(Button keybindButton, CommandBlock commandBlock, Key key)
+        {
+            if (_setKeybinding(commandBlock.MethodName, key))
+            {
                 keybindButton.text = key.ToString();
-            } else {
+            }
+            else
+            {
                 keybindButton.text = "Keybind";
             }
         }
 
         [ContextMenu("Erase Keybinds")]
-        private void _eraseKeybinds() {
-            PlayerPrefs.SetString(_keybindSavePlayerPref,"");
+        private void _eraseKeybinds()
+        {
+            PlayerPrefs.SetString(_keybindSavePlayerPref, "");
             Debug.Log("Keybinds Erased");
         }
 
-#endregion
+        #endregion
     }
-    
+
     #region Attributes
-    
+
     [System.AttributeUsage(System.AttributeTargets.Method)]
-    public class DebugOptionsAttribute : System.Attribute {
+    public class DebugOptionsAttribute : System.Attribute
+    {
         public string OptionCategoryName;
-        public DebugOptionsAttribute (string optionCategoryName) {
+
+        public DebugOptionsAttribute(string optionCategoryName)
+        {
             OptionCategoryName = optionCategoryName;
         }
     }
 
 
     [System.AttributeUsage(System.AttributeTargets.Field)]
-    public class DebugCommandGroupAttribute : System.Attribute {
+    public class DebugCommandGroupAttribute : System.Attribute
+    {
 
         public string GroupName { get; }
-        public DebugCommandGroupAttribute (string groupNameName) {
+
+        public DebugCommandGroupAttribute(string groupNameName)
+        {
             GroupName = groupNameName;
         }
     }
 
     [System.AttributeUsage(System.AttributeTargets.Method)]
-    public class DebugCommandAttribute : System.Attribute {
+    public class DebugCommandAttribute : System.Attribute
+    {
 
         public string Group { get; }
         public string[] ParameterOptionKeys { get; }
 
-        public DebugCommandAttribute (string group) {
+        public DebugCommandAttribute(string group)
+        {
             Group = group;
             ParameterOptionKeys = null;
         }
-        public DebugCommandAttribute (string group = HolyDebugGroupStyles.Uncategorized, params string[] parameterOptionKeys) {
+
+        public DebugCommandAttribute(string group = HolyDebugGroupStyles.Uncategorized, params string[] parameterOptionKeys)
+        {
             Group = group;
             ParameterOptionKeys = parameterOptionKeys;
         }
 
-        public DebugCommandAttribute() {
+        public DebugCommandAttribute()
+        {
             Group = HolyDebugGroupStyles.Uncategorized;
             ParameterOptionKeys = null;
         }
     }
 
-    public static partial class DebugCommandRegistry {
-        
-        public struct MethodGroup {
+    public static partial class DebugCommandRegistry
+    {
+
+        public struct MethodGroup
+        {
             public readonly PropertyInfo property;
             public readonly FieldInfo field;
             public readonly MethodInfo method;
             public DebugGroupStyle group;
             public readonly bool isReadOnly;
             public readonly string[] parameterOptionKeys;
-            public MethodGroup (MethodInfo method, DebugGroupStyle group, FieldInfo field, PropertyInfo property, bool isReadOnly,string[] parameterOptionKeys) {
+
+            public MethodGroup(MethodInfo method, DebugGroupStyle group, FieldInfo field, PropertyInfo property, bool isReadOnly, string[] parameterOptionKeys)
+            {
                 this.method = method;
                 this.group = group;
                 this.field = field;
@@ -1385,23 +1724,38 @@ namespace Holylib.DebugConsole {
             }
         }
 
-        private static string[] UnityAssemblies = new []{
-            "Unity","UnityEngine","System","UnityEditor"
-        };
+        public static Dictionary<string, DebugGroupStyle> NameToGroup;
+        public static Dictionary<string, MethodGroup> Commands;
 
-        public static Dictionary<string, DebugGroupStyle> NameToGroup = new Dictionary<string, DebugGroupStyle>();
-        public static Dictionary<string, MethodGroup> Commands = new Dictionary<string, MethodGroup>();
+        public static void RegisterCommands(HolyDebugConsole instance)
+        {
+            NameToGroup = new Dictionary<string, DebugGroupStyle>();
+            Commands = new Dictionary<string, MethodGroup>();
+            
+            List<Assembly> validAssemblies = new List<Assembly>();
 
-        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
-        private static void RegisterCommands() {
+            foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                string assemblyName = assembly.GetName().Name;
 
-            foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies()) {
-                string assemblyName = assembly.FullName;
-                
-                if (!HolyDebugConsole.instance.whitelistedAssemblies.Contains(assemblyName)) continue;
+                if (instance.whitelistedAssemblies.Contains(assemblyName))
+                {
+                    validAssemblies.Add(assembly);
+                }
+            }
 
-                foreach (Type type in assembly.GetTypes()) {
+            foreach (Assembly assembly in validAssemblies)
+            {
+                foreach (Type type in assembly.GetTypes())
+                {
                     _registerStyles(type);
+                }
+            }
+            
+            foreach (Assembly assembly in validAssemblies)
+            {
+                foreach (Type type in assembly.GetTypes())
+                {
                     _registerCommands(type);
                     _registerVariables(type);
                     _registerCommandOptions(type);
@@ -1409,68 +1763,94 @@ namespace Holylib.DebugConsole {
             }
         }
 
-        private static void _registerCommands (Type type) {
+        [OnExitingPlayMode]
+        private static void UnregisterCommands()
+        {
+            NameToGroup = null;
+            Commands = null;
+        }
 
-            foreach (MethodInfo method in type.GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)) {
-                try {
+        private static void _registerCommands(Type type)
+        {
+
+            foreach (MethodInfo method in type.GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic))
+            {
+                try
+                {
                     var attribute = method.GetCustomAttribute<DebugCommandAttribute>();
-                    if (attribute != null) {
-                        if (NameToGroup.TryGetValue(attribute.Group, out DebugGroupStyle group)) {
-                            Commands[method.Name.ToLower()] = new(method, group, null, null, false,attribute.ParameterOptionKeys);
-                        } else {
-                            NameToGroup[attribute.Group] = new DebugGroupStyle(attribute.Group, Color.white);
-                            Commands[method.Name.ToLower()] = new(method, NameToGroup[attribute.Group], null, null, false,attribute.ParameterOptionKeys);
-                        }
+                    if (attribute == null) continue;
+                    
+                    if (NameToGroup.TryGetValue(attribute.Group, out DebugGroupStyle group))
+                    {
+                        Commands[method.Name.ToLower()] = new MethodGroup(method, group, null, null, false, attribute.ParameterOptionKeys);
+                    }
+                    else
+                    {
+                        NameToGroup[attribute.Group] = new DebugGroupStyle(attribute.Group, Color.white);
+                        Commands[method.Name.ToLower()] = new MethodGroup(method, NameToGroup[attribute.Group], null, null, false, attribute.ParameterOptionKeys);
                     }
                 }
-                catch (Exception e) {
+                catch (Exception e)
+                {
                     Debug.LogException(e);
                 }
             }
         }
-        
-        private static void _registerCommandOptions (Type type) {
 
-            foreach (MethodInfo method in type.GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)) {
-                try {
+        private static void _registerCommandOptions(Type type)
+        {
+
+            foreach (MethodInfo method in type.GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic))
+            {
+                try
+                {
                     var attribute = method.GetCustomAttribute<DebugOptionsAttribute>();
-                    if (attribute != null) {
-                        
+                    if (attribute != null)
+                    {
+
                         if (method.ReturnType != typeof(List<string>))
                         {
                             Debug.LogError($"[DebugOptionSelector] Method '{method.Name}' must return List<string> but returns {method.ReturnType.Name}");
                             continue;
                         }
-                        
-                        DebugCommandOptionRegistery.Register(attribute.OptionCategoryName,() => method.Invoke(null, null) as List<string>);
+
+                        DebugCommandOptionRegistery.Register(attribute.OptionCategoryName, () => method.Invoke(null, null) as List<string>);
                     }
                 }
-                catch (Exception e) {
+                catch (Exception e)
+                {
                     Debug.LogException(e);
                 }
             }
         }
 
-        private static void _registerStyles (Type type) {
-
-            foreach (FieldInfo field in type.GetFields(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)) {
-                try {
+        private static void _registerStyles(Type type)
+        {
+            foreach (FieldInfo field in type.GetFields(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic))
+            {
+                try
+                {
                     var attribute = field.GetCustomAttribute<DebugCommandGroupAttribute>();
-                    if (attribute != null) {
-                        NameToGroup[attribute.GroupName] = (DebugGroupStyle)field.GetValue(null);
+                    if (attribute != null)
+                    {
+                        DebugGroupStyle style = (DebugGroupStyle)field.GetValue(null);
+                        NameToGroup[attribute.GroupName] = style;
                     }
                 }
-                catch (Exception e) {
+                catch (Exception e)
+                {
                     Debug.LogException(e);
                 }
             }
-            
+
         }
 
-        public static bool TryInvoke (string input) {
+        public static bool TryInvoke(string input)
+        {
             if (input.Length == 0) return false;
 
-            if (input.Count(c => c == '"') % 2 != 0) {
+            if (input.Count(c => c == '"') % 2 != 0)
+            {
                 Debug.LogWarning($"Your quotation count doesn't make sense");
                 return false;
             }
@@ -1480,29 +1860,42 @@ namespace Holylib.DebugConsole {
             bool quotationOpen = false;
             string quotedText = "";
             string currentPhrase = "";
-            for (int c = 0; c < input.Length; c++) {
-                if (input[c] == '"') {
-                    if (!quotationOpen && currentPhrase != "") {
+            for (int c = 0; c < input.Length; c++)
+            {
+                if (input[c] == '"')
+                {
+                    if (!quotationOpen && currentPhrase != "")
+                    {
                         tokens.Add(currentPhrase);
                         currentPhrase = "";
                     }
 
                     quotationOpen = !quotationOpen;
 
-                    if (!quotationOpen) {
+                    if (!quotationOpen)
+                    {
                         tokens.Add(quotedText);
                         quotedText = "";
                     }
-                } else {
-                    if (quotationOpen) {
+                }
+                else
+                {
+                    if (quotationOpen)
+                    {
                         quotedText += input[c];
-                    } else {
-                        if (input[c] == ' ') {
-                            if (currentPhrase.Length > 0) {
+                    }
+                    else
+                    {
+                        if (input[c] == ' ')
+                        {
+                            if (currentPhrase.Length > 0)
+                            {
                                 tokens.Add(currentPhrase);
                                 currentPhrase = "";
                             }
-                        } else {
+                        }
+                        else
+                        {
                             currentPhrase += input[c];
                         }
                     }
@@ -1510,25 +1903,27 @@ namespace Holylib.DebugConsole {
             }
 
             if (currentPhrase != "") tokens.Add(currentPhrase);
-
-
-            MethodGroup methodGroup;
+            
             string command = tokens[0].ToLower();
-            if (!Commands.TryGetValue(command, out methodGroup))
+            if (!Commands.TryGetValue(command, out MethodGroup methodGroup))
                 return false;
 
             var parameters = methodGroup.method.GetParameters();
-            if (tokens.Count - 1 != parameters.Length) {
+            if (tokens.Count - 1 != parameters.Length)
+            {
                 Debug.LogWarning($"Expected {parameters.Length} arguments but got {tokens.Count - 1}.");
                 return false;
             }
 
             object[] parsedArgs = new object[parameters.Length];
-            for (int i = 0; i < parameters.Length; i++) {
-                try {
+            for (int i = 0; i < parameters.Length; i++)
+            {
+                try
+                {
                     parsedArgs[i] = Convert.ChangeType(tokens[i + 1], parameters[i].ParameterType);
                 }
-                catch {
+                catch
+                {
                     Debug.LogWarning($"Failed to parse argument '{tokens[i + 1]}' as {parameters[i].ParameterType.Name}.");
                     return false;
                 }
@@ -1538,18 +1933,24 @@ namespace Holylib.DebugConsole {
             return true;
         }
     }
-    
-    public static class DebugCommandOptionRegistery
+
+    public partial class DebugCommandOptionRegistery
     {
         private static readonly Dictionary<string, Func<List<string>>> _options = new();
 
-        public static void Register(string key, Func<List<string>> option) {
-            
-            _options[key] = ()=> option()??new();
+        public static void Register(string key, Func<List<string>> option)
+        {
+            _options[key] = () => option() ?? new List<string>();
         }
 
-        public static List<string> Get(string key) => _options.TryGetValue(key, out var fn) ? fn() : new();
-    }
-    #endregion
+        public static List<string> Get(string key) => _options.TryGetValue(key, out var fn) ? fn() : new List<string>();
 
+        [OnExitingPlayMode]
+        private static void Unregister()
+        {
+            _options.Clear();
+        }
+    }
+
+    #endregion
 }

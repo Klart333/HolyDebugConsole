@@ -5,6 +5,8 @@ using UnityEngine.UIElements;
 
 public class ComboBox
 {
+    public event Action<string> OnValueClicked;
+    
     private readonly TextField _input;
     private readonly VisualElement _root;
     private TemplateContainer _popup;
@@ -33,7 +35,6 @@ public class ComboBox
         if (options == null || options.Count == 0) return;
 
         evt.StopPropagation();
-        evt.PreventDefault();
 
         if (_popup == null)
             TogglePopup();
@@ -122,6 +123,7 @@ public class ComboBox
         if (label == null) return;
 
         _input.value = label.userData as string;
+        OnValueClicked?.Invoke(label.userData as string);
         evt.StopPropagation();
 
         return;
@@ -138,7 +140,11 @@ public class ComboBox
     public void ClosePopup()
     {
         _root.panel.visualTree.UnregisterCallback<MouseDownEvent>(OnClickOutside, TrickleDown.TrickleDown);
-        _popup?.RemoveFromHierarchy();
-        _popup = null;
+    
+        if (_popup != null)
+        {
+            _popup.RemoveFromHierarchy();
+            _popup = null;
+        }
     }
 }
